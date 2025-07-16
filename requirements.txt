@@ -1,0 +1,17 @@
+# API
+fastapi
+uvicorn[standard]
+python-multipart
+
+# UI
+streamlit
+requests
+
+# Core ML/Vector Search
+langchain
+sentence-transformers
+faiss-cpu          # Use faiss-gpu if you have a compatible NVIDIA GPU
+PyMuPDF
+
+# For reading .env files
+python-dotenv
