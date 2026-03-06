@@ -1,129 +1,144 @@
+import io
 import streamlit as st
 import requests
-import os
 
-# --- Configuration ---
-API_BASE_URL = "http://127.0.0.1:8000"  # URL of your FastAPI backend
+st.set_page_config(page_title="SCALAR Vector DB", page_icon="🔷", layout="wide")
+st.title("🔷 SCALAR Vector Database")
 
-# --- Streamlit Page Setup ---
-st.set_page_config(
-    page_title="Semantic Search Engine",
-    page_icon="🔍",
-    layout="wide"
-)
+# --- Sidebar ---
+with st.sidebar:
+    st.header("Configuration")
+    api_url = st.text_input("API Base URL", value="http://127.0.0.1:8000")
+    api_key = st.text_input("API Key", type="password", value="")
+    namespace = st.text_input("Namespace", value="default")
+    st.divider()
+    if st.button("📊 View Stats"):
+        try:
+            r = requests.get(f"{api_url}/stats", headers={"X-API-Key": api_key}, timeout=10)
+            if r.status_code == 200:
+                st.json(r.json())
+            else:
+                st.error(f"Stats error: {r.status_code}")
+        except Exception as e:
+            st.error(str(e))
 
-st.title("📄🔍 Semantic PDF Search Engine")
-st.markdown("""
-This application allows you to build a searchable knowledge base from your PDF documents.
-- **Step 1:** Upload one or more PDF files. The system will process and index their content.
-- **Step 2:** Ask a question or enter keywords to search across all uploaded documents.
-""")
+HEADERS = {"X-API-Key": api_key}
 
-# --- Helper Functions to Interact with API ---
+tab1, tab2, tab3 = st.tabs(["📤 Ingest", "🔍 Search", "📄 Documents"])
 
-def upload_document(file_path):
-    """Sends a file to the /upload endpoint."""
-    try:
-        with open(file_path, "rb") as f:
-            files = {'file': (os.path.basename(file_path), f, 'application/pdf')}
-            response = requests.post(f"{API_BASE_URL}/upload", files=files, timeout=600)
-            return response.json()
-    except requests.exceptions.RequestException as e:
-        return {"error": f"Failed to connect to API: {e}"}
+# --- Tab 1: Ingest ---
+with tab1:
+    st.header("Ingest Documents")
+    st.markdown("Upload PDF, DOCX, TXT, or Markdown files to build your knowledge base.")
+    uploaded = st.file_uploader(
+        "Choose files",
+        type=["pdf", "docx", "txt", "md"],
+        accept_multiple_files=True,
+    )
+    if uploaded:
+        for f in uploaded:
+            with st.spinner(f"Indexing **{f.name}**..."):
+                try:
+                    resp = requests.post(
+                        f"{api_url}/ingest/",
+                        params={"namespace": namespace},
+                        files={"file": (f.name, f.getvalue(), f.type or "application/octet-stream")},
+                        headers=HEADERS,
+                        timeout=600,
+                    )
+                    if resp.status_code == 200:
+                        d = resp.json()
+                        st.success(f"✅ **{f.name}** — {d['chunks_indexed']} chunks indexed")
+                    else:
+                        st.error(f"❌ **{f.name}**: {resp.json().get('detail', resp.status_code)}")
+                except Exception as e:
+                    st.error(f"Connection error: {e}")
 
-def perform_search(query, k):
-    """Sends a query to the /search endpoint."""
-    payload = {"query_text": query, "k": k}
-    try:
-        response = requests.post(f"{API_BASE_URL}/search", json=payload, timeout=120)
-        if response.status_code == 200:
-            return response.json()
+# --- Tab 2: Search ---
+with tab2:
+    st.header("Search")
+    col1, col2, col3 = st.columns([6, 1, 1])
+    with col1:
+        query = st.text_input("Query", placeholder="What is machine learning?")
+    with col2:
+        k = st.number_input("Top K", min_value=1, max_value=100, value=5)
+    with col3:
+        rerank = st.checkbox("Rerank")
+
+    if st.button("Search 🔍"):
+        if not query.strip():
+            st.warning("Please enter a query.")
         else:
-            return {"error": response.json().get('detail', 'Unknown error')}
-    except requests.exceptions.RequestException as e:
-        return {"error": f"Failed to connect to API: {e}"}
+            with st.spinner("Searching..."):
+                try:
+                    resp = requests.post(
+                        f"{api_url}/search/",
+                        json={
+                            "query_text": query,
+                            "k": k,
+                            "namespace": namespace,
+                            "rerank": rerank,
+                        },
+                        headers=HEADERS,
+                        timeout=120,
+                    )
+                except Exception as e:
+                    st.error(f"Connection error: {e}")
+                    st.stop()
 
-
-# --- UI Components ---
-
-# 1. Ingestion Pipeline Section
-st.header("Step 1: Upload Documents")
-uploaded_files = st.file_uploader(
-    "Choose PDF files to add to the knowledge base",
-    type="pdf",
-    accept_multiple_files=True
-)
-
-if uploaded_files:
-    for uploaded_file in uploaded_files:
-        # To handle the file, we need to save it temporarily
-        temp_dir = "temp_ui_uploads"
-        os.makedirs(temp_dir, exist_ok=True)
-        temp_path = os.path.join(temp_dir, uploaded_file.name)
-        
-        with open(temp_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        
-        with st.spinner(f"Processing '{uploaded_file.name}'... This may take a moment."):
-            # We call a slightly modified function to get more error details
-            try:
-                with open(temp_path, "rb") as f_rb:
-                    files = {'file': (os.path.basename(temp_path), f_rb, 'application/pdf')}
-                    response = requests.post(f"{API_BASE_URL}/upload", files=files, timeout=600)
-                
-                # Check for non-200 status codes
-                if response.status_code != 200:
-                    # Try to get the detailed error from the JSON response
-                    error_detail = response.json().get('detail', 'No detailed error message provided.')
-                    st.error(f"Error processing {uploaded_file.name}: {error_detail}")
+            if resp.status_code == 200:
+                results = resp.json()["results"]
+                if not results:
+                    st.info("No results found.")
                 else:
-                    st.success(f"✅ Successfully indexed '{uploaded_file.name}'!")
+                    st.success(f"Found {len(results)} result(s)")
+                    for i, r in enumerate(results):
+                        page = r.get("page_number", "?")
+                        with st.expander(
+                            f"**#{i+1}** | {r['source']} · page {page} · score {r['score']:.4f}"
+                        ):
+                            st.markdown(r["content"])
+            else:
+                st.error(f"Search failed: {resp.json().get('detail', resp.status_code)}")
 
-            except requests.exceptions.RequestException as e:
-                st.error(f"Failed to connect to API while processing {uploaded_file.name}: {e}")
-            except Exception as e:
-                st.error(f"An unexpected error occurred with {uploaded_file.name}: {e}")
+# --- Tab 3: Documents ---
+with tab3:
+    st.header("Manage Documents")
+    col_refresh, _ = st.columns([1, 5])
+    with col_refresh:
+        refresh = st.button("🔄 Refresh List")
 
-        # Clean up the temporary file
-        os.remove(temp_path)
-
-
-# 2. Query Engine Section
-st.header("Step 2: Search the Knowledge Base")
-
-col1, col2 = st.columns([8, 1])
-with col1:
-    query = st.text_input("Enter your search query:", placeholder="e.g., What is the main idea of the document?")
-with col2:
-    top_k = st.number_input("Top K", min_value=1, max_value=20, value=3)
-
-if st.button("Search 🔍"):
-    if not query:
-        st.warning("Please enter a query.")
-    else:
-        with st.spinner("Searching..."):
-            search_results = perform_search(query, top_k)
-
-        # --- Find this section at the bottom of ui/app.py ---
-
-        st.subheader("Search Results")
-        if "error" in search_results:
-            st.error(f"Search failed: {search_results['error']}")
-        elif not search_results.get("results"):
-            st.info("No relevant results found.")
-        else:
-            for i, result in enumerate(search_results["results"]):
-                # --- NEW: Displaying the page number from the metadata ---
-                metadata = result['metadata']
-                source = metadata.get('source', 'Unknown Source')
-                page_num = metadata.get('page_number', 'N/A')
-                
-                expander_title = (
-                    f"**Result {i+1}** | "
-                    f"Source: `{source}` | "
-                    f"Page: `{page_num}` | "
-                    f"Similarity: {result['similarity']:.2f}"
-                )
-                
-                with st.expander(expander_title):
-                    st.markdown(metadata['content'])
+    if refresh:
+        try:
+            resp = requests.get(
+                f"{api_url}/documents/",
+                params={"namespace": namespace},
+                headers=HEADERS,
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                docs = resp.json()["documents"]
+                if not docs:
+                    st.info(f"No documents in namespace **{namespace}**.")
+                else:
+                    st.write(f"**{len(docs)}** document(s) in namespace `{namespace}`:")
+                    for doc in docs:
+                        col1, col2, col3 = st.columns([5, 1, 1])
+                        col1.write(f"📄 **{doc['source']}** — {doc['chunk_count']} chunks")
+                        col2.write(f"`{doc.get('created_at', '')[:10]}`")
+                        if col3.button("🗑 Delete", key=f"del_{doc['source']}"):
+                            del_resp = requests.delete(
+                                f"{api_url}/documents/{doc['source']}",
+                                params={"namespace": namespace},
+                                headers=HEADERS,
+                                timeout=30,
+                            )
+                            if del_resp.status_code == 200:
+                                st.toast(f"Deleted {doc['source']}")
+                                st.rerun()
+                            else:
+                                st.error(f"Delete failed: {del_resp.json().get('detail')}")
+            else:
+                st.error(f"Failed to list documents: {resp.status_code}")
+        except Exception as e:
+            st.error(f"Connection error: {e}")
