@@ -1,6 +1,6 @@
 import sqlite3
 import threading
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 
 
 class Database:
@@ -54,162 +54,194 @@ class Database:
                      content: str) -> int:
         with self._lock:
             conn = self._connect()
-            cur = conn.execute(
-                "INSERT INTO chunks (source, namespace, page_number, chunk_index, content) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (source, namespace, page_number, chunk_index, content)
-            )
-            chunk_id = cur.lastrowid
-            conn.commit()
-            conn.close()
-        return chunk_id
+            try:
+                cur = conn.execute(
+                    "INSERT INTO chunks (source, namespace, page_number, chunk_index, content) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (source, namespace, page_number, chunk_index, content)
+                )
+                chunk_id = cur.lastrowid
+                conn.commit()
+                return chunk_id
+            finally:
+                conn.close()
 
     def insert_chunks_batch(self, rows: List[Dict]) -> List[int]:
         """Insert many chunks atomically. rows: list of dicts with keys source, namespace, page_number, chunk_index, content."""
         with self._lock:
             conn = self._connect()
-            ids = []
-            for row in rows:
-                cur = conn.execute(
-                    "INSERT INTO chunks (source, namespace, page_number, chunk_index, content) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (row["source"], row["namespace"], row["page_number"],
-                     row["chunk_index"], row["content"])
-                )
-                ids.append(cur.lastrowid)
-            conn.commit()
-            conn.close()
-        return ids
+            try:
+                ids = []
+                # Cannot use executemany here: we need lastrowid for each row individually.
+                # executemany only returns the lastrowid of the final row.
+                for row in rows:
+                    cur = conn.execute(
+                        "INSERT INTO chunks (source, namespace, page_number, chunk_index, content) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (row["source"], row["namespace"], row["page_number"],
+                         row["chunk_index"], row["content"])
+                    )
+                    ids.append(cur.lastrowid)
+                conn.commit()
+                return ids
+            finally:
+                conn.close()
 
     def get_chunk(self, chunk_id: int) -> Optional[Dict]:
         conn = self._connect()
-        row = conn.execute("SELECT * FROM chunks WHERE id = ?", (chunk_id,)).fetchone()
-        conn.close()
-        return dict(row) if row else None
+        try:
+            row = conn.execute("SELECT * FROM chunks WHERE id = ?", (chunk_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
 
     def get_chunks_by_ids(self, ids: List[int]) -> List[Dict]:
         if not ids:
             return []
         placeholders = ",".join("?" * len(ids))
         conn = self._connect()
-        rows = conn.execute(
-            f"SELECT * FROM chunks WHERE id IN ({placeholders}) AND deleted = 0",
-            ids
-        ).fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
+        try:
+            rows = conn.execute(
+                f"SELECT * FROM chunks WHERE id IN ({placeholders}) AND deleted = 0",
+                ids
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
 
     def get_active_chunk_ids(self, namespace: str) -> List[int]:
         conn = self._connect()
-        rows = conn.execute(
-            "SELECT id FROM chunks WHERE namespace = ? AND deleted = 0",
-            (namespace,)
-        ).fetchall()
-        conn.close()
-        return [r["id"] for r in rows]
+        try:
+            rows = conn.execute(
+                "SELECT id FROM chunks WHERE namespace = ? AND deleted = 0",
+                (namespace,)
+            ).fetchall()
+            return [r["id"] for r in rows]
+        finally:
+            conn.close()
 
     def get_active_chunks(self, namespace: str) -> List[Dict]:
         conn = self._connect()
-        rows = conn.execute(
-            "SELECT * FROM chunks WHERE namespace = ? AND deleted = 0",
-            (namespace,)
-        ).fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
+        try:
+            rows = conn.execute(
+                "SELECT * FROM chunks WHERE namespace = ? AND deleted = 0",
+                (namespace,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
 
     def soft_delete_source(self, source: str, namespace: str) -> int:
         """Mark all chunks for a source as deleted. Returns affected row count."""
         with self._lock:
             conn = self._connect()
-            cur = conn.execute(
-                "UPDATE chunks SET deleted = 1 WHERE source = ? AND namespace = ?",
-                (source, namespace)
-            )
-            affected = cur.rowcount
-            conn.commit()
-            conn.close()
-        return affected
+            try:
+                cur = conn.execute(
+                    "UPDATE chunks SET deleted = 1 WHERE source = ? AND namespace = ?",
+                    (source, namespace)
+                )
+                affected = cur.rowcount
+                conn.commit()
+                return affected
+            finally:
+                conn.close()
 
     def source_exists(self, source: str, namespace: str) -> bool:
         conn = self._connect()
-        row = conn.execute(
-            "SELECT 1 FROM chunks WHERE source = ? AND namespace = ? AND deleted = 0 LIMIT 1",
-            (source, namespace)
-        ).fetchone()
-        conn.close()
-        return row is not None
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM chunks WHERE source = ? AND namespace = ? AND deleted = 0 LIMIT 1",
+                (source, namespace)
+            ).fetchone()
+            return row is not None
+        finally:
+            conn.close()
 
     def list_sources(self, namespace: str) -> List[Dict]:
         conn = self._connect()
-        rows = conn.execute(
-            """SELECT source, namespace,
-                      COUNT(*) as chunk_count,
-                      MIN(created_at) as created_at
-               FROM chunks
-               WHERE namespace = ? AND deleted = 0
-               GROUP BY source, namespace
-               ORDER BY MIN(created_at) DESC""",
-            (namespace,)
-        ).fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
+        try:
+            rows = conn.execute(
+                """SELECT source, namespace,
+                          COUNT(*) as chunk_count,
+                          MIN(created_at) as created_at
+                   FROM chunks
+                   WHERE namespace = ? AND deleted = 0
+                   GROUP BY source, namespace
+                   ORDER BY MIN(created_at) DESC""",
+                (namespace,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
 
     def list_all_sources(self) -> List[Dict]:
         conn = self._connect()
-        rows = conn.execute(
-            """SELECT source, namespace,
-                      COUNT(*) as chunk_count,
-                      MIN(created_at) as created_at
-               FROM chunks
-               WHERE deleted = 0
-               GROUP BY source, namespace
-               ORDER BY namespace, MIN(created_at) DESC"""
-        ).fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
+        try:
+            rows = conn.execute(
+                """SELECT source, namespace,
+                          COUNT(*) as chunk_count,
+                          MIN(created_at) as created_at
+                   FROM chunks
+                   WHERE deleted = 0
+                   GROUP BY source, namespace
+                   ORDER BY namespace, MIN(created_at) DESC"""
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
 
     def get_stats(self) -> Dict:
         conn = self._connect()
-        total_chunks = conn.execute(
-            "SELECT COUNT(*) FROM chunks WHERE deleted = 0"
-        ).fetchone()[0]
-        total_sources = conn.execute(
-            "SELECT COUNT(DISTINCT source || '|' || namespace) FROM chunks WHERE deleted = 0"
-        ).fetchone()[0]
-        namespaces = conn.execute(
-            "SELECT DISTINCT namespace FROM chunks WHERE deleted = 0"
-        ).fetchall()
-        conn.close()
-        return {
-            "total_chunks": total_chunks,
-            "total_sources": total_sources,
-            "namespaces": [r[0] for r in namespaces],
-        }
+        try:
+            conn.execute("BEGIN")
+            total_chunks = conn.execute(
+                "SELECT COUNT(*) FROM chunks WHERE deleted = 0"
+            ).fetchone()[0]
+            total_sources = conn.execute(
+                "SELECT COUNT(DISTINCT source || '|' || namespace) FROM chunks WHERE deleted = 0"
+            ).fetchone()[0]
+            namespaces = conn.execute(
+                "SELECT DISTINCT namespace FROM chunks WHERE deleted = 0"
+            ).fetchall()
+            conn.execute("COMMIT")
+            return {
+                "total_chunks": total_chunks,
+                "total_sources": total_sources,
+                "namespaces": [r[0] for r in namespaces],
+            }
+        finally:
+            conn.close()
 
     # --- Job tracking ---
 
     def create_job(self, job_id: str, source: str, namespace: str):
         with self._lock:
             conn = self._connect()
-            conn.execute(
-                "INSERT INTO jobs (id, status, source, namespace) VALUES (?, 'pending', ?, ?)",
-                (job_id, source, namespace)
-            )
-            conn.commit()
-            conn.close()
+            try:
+                conn.execute(
+                    "INSERT INTO jobs (id, status, source, namespace) VALUES (?, 'pending', ?, ?)",
+                    (job_id, source, namespace)
+                )
+                conn.commit()
+            finally:
+                conn.close()
 
     def update_job(self, job_id: str, status: str, result: str = None):
         with self._lock:
             conn = self._connect()
-            conn.execute(
-                "UPDATE jobs SET status = ?, result = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (status, result, job_id)
-            )
-            conn.commit()
-            conn.close()
+            try:
+                conn.execute(
+                    "UPDATE jobs SET status = ?, result = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (status, result, job_id)
+                )
+                conn.commit()
+            finally:
+                conn.close()
 
     def get_job(self, job_id: str) -> Optional[Dict]:
         conn = self._connect()
-        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        conn.close()
-        return dict(row) if row else None
+        try:
+            row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
