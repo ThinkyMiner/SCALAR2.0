@@ -1,6 +1,7 @@
 import os
 import shutil
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query
+import uuid
+from fastapi import APIRouter, BackgroundTasks, UploadFile, File, HTTPException, Query
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from api.main import db, vector_svc, bm25_svc
@@ -86,10 +87,6 @@ async def ingest_file(
         "namespace": namespace,
         "chunks_indexed": len(rows),
     }
-
-
-import uuid
-from fastapi import BackgroundTasks
 
 
 def _run_ingest_job(job_id: str, tmp_path: str, filename: str, namespace: str):
