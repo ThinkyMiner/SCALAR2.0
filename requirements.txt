@@ -9,9 +9,19 @@ requests
 
 # Core ML/Vector Search
 langchain
+langchain-community
 sentence-transformers
-faiss-cpu          # Use faiss-gpu if you have a compatible NVIDIA GPU
+faiss-cpu
 PyMuPDF
 
-# For reading .env files
+# New dependencies
+rank-bm25
+python-docx
+httpx
+
+# Utils
 python-dotenv
+
+# Testing
+pytest
+pytest-asyncio
