@@ -51,6 +51,10 @@ app = FastAPI(
 app.add_middleware(APIKeyMiddleware)
 
 
+from api.routes import ingest as ingest_routes
+app.include_router(ingest_routes.router, prefix="/ingest", tags=["Ingest"])
+
+
 @app.get("/health", tags=["Admin"])
 def health():
     return {"status": "ok", "version": "2.0.0"}
