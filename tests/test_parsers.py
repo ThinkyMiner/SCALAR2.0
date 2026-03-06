@@ -1,4 +1,3 @@
-import os
 import pytest
 from core.parsers import parse_file
 

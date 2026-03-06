@@ -26,14 +26,13 @@ def _parse_pdf(file_path: str) -> List[Dict]:
     import fitz  # PyMuPDF
     pages = []
     try:
-        doc = fitz.open(file_path)
-        for i, page in enumerate(doc):
-            text = page.get_text().strip()
-            if text:
-                pages.append({"text": text, "page_number": i + 1})
-        doc.close()
+        with fitz.open(file_path) as doc:
+            for i, page in enumerate(doc):
+                text = page.get_text().strip()
+                if text:
+                    pages.append({"text": text, "page_number": i + 1})
     except Exception as e:
-        raise RuntimeError(f"Failed to read PDF: {e}")
+        raise RuntimeError(f"Failed to read PDF: {e}") from e
     if not pages:
         raise ValueError("No text could be extracted from the PDF.")
     return pages
