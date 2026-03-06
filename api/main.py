@@ -6,6 +6,9 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
 
+from api.logging_config import setup_logging, RequestLoggingMiddleware
+setup_logging()
+
 from fastapi import FastAPI
 from api.auth import APIKeyMiddleware
 from core.database import Database
@@ -48,6 +51,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(APIKeyMiddleware)
 
 
