@@ -54,6 +54,9 @@ app.add_middleware(APIKeyMiddleware)
 from api.routes import ingest as ingest_routes
 app.include_router(ingest_routes.router, prefix="/ingest", tags=["Ingest"])
 
+from api.routes import search as search_routes
+app.include_router(search_routes.router, prefix="/search", tags=["Search"])
+
 
 @app.get("/health", tags=["Admin"])
 def health():
