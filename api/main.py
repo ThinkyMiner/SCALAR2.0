@@ -57,15 +57,8 @@ app.include_router(ingest_routes.router, prefix="/ingest", tags=["Ingest"])
 from api.routes import search as search_routes
 app.include_router(search_routes.router, prefix="/search", tags=["Search"])
 
+from api.routes import documents as documents_routes
+app.include_router(documents_routes.router, prefix="/documents", tags=["Documents"])
 
-@app.get("/health", tags=["Admin"])
-def health():
-    return {"status": "ok", "version": "2.0.0"}
-
-
-@app.get("/stats", tags=["Admin"])
-def stats():
-    s = db.get_stats()
-    s["index_vector_count"] = vector_svc.index.ntotal
-    s["embedding_model"] = os.getenv("SCALAR_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-    return s
+from api.routes import admin as admin_routes
+app.include_router(admin_routes.router, tags=["Admin"])
