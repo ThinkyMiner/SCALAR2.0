@@ -86,3 +86,71 @@ async def ingest_file(
         "namespace": namespace,
         "chunks_indexed": len(rows),
     }
+
+
+import uuid
+from fastapi import BackgroundTasks
+
+
+def _run_ingest_job(job_id: str, tmp_path: str, filename: str, namespace: str):
+    """Background task: process file, update job status in DB."""
+    try:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter as Splitter
+        pages = parse_file(tmp_path, filename)
+        splitter = Splitter(
+            chunk_size=CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
+            separators=["\n\n", "\n", ". ", " "],
+        )
+        rows = []
+        for page in pages:
+            for i, chunk_text in enumerate(splitter.split_text(page["text"])):
+                rows.append({
+                    "source": filename,
+                    "namespace": namespace,
+                    "page_number": page["page_number"],
+                    "chunk_index": i,
+                    "content": chunk_text,
+                })
+        chunk_ids = db.insert_chunks_batch(rows)
+        vector_svc.add_vectors(chunk_ids, [r["content"] for r in rows])
+        bm25_svc.rebuild(db.get_active_chunks(namespace))
+        db.update_job(job_id, "completed", f"Indexed {len(rows)} chunks")
+    except Exception as e:
+        db.update_job(job_id, "failed", str(e))
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+@router.post("/async")
+async def ingest_file_async(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    namespace: str = Query("default"),
+):
+    filename = file.filename
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type '{ext}'.")
+    if db.source_exists(filename, namespace):
+        raise HTTPException(status_code=422, detail=f"'{filename}' already indexed.")
+
+    job_id = str(uuid.uuid4())
+    tmp_path = os.path.join(TEMP_DIR, f"async_{job_id}_{filename}")
+    with open(tmp_path, "wb") as buf:
+        shutil.copyfileobj(file.file, buf)
+    await file.close()
+
+    db.create_job(job_id, filename, namespace)
+    background_tasks.add_task(_run_ingest_job, job_id, tmp_path, filename, namespace)
+
+    return {"job_id": job_id, "status": "pending", "source": filename, "namespace": namespace}
+
+
+@router.get("/jobs/{job_id}")
+def get_job_status(job_id: str):
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return job
